@@ -33,23 +33,23 @@ USER_AGENTS = [
 ]
 
 REAL_PAIRS = {
-    'EUR/USD': {'ticker': 'EURUSD=X', 'flag': '🇪🇺🇺🇸'},
-    'GBP/USD': {'ticker': 'GBPUSD=X', 'flag': '🇬🇧🇺🇸'},
-    'USD/JPY': {'ticker': 'USDJPY=X', 'flag': '🇺🇸🇯🇵'},
-    'AUD/USD': {'ticker': 'AUDUSD=X', 'flag': '🇦🇺🇺🇸'},
-    'USD/CAD': {'ticker': 'USDCAD=X', 'flag': '🇺🇸🇨🇦'},
-    'USD/CHF': {'ticker': 'USDCHF=X', 'flag': '🇺🇸🇨🇭'},
-    'EUR/GBP': {'ticker': 'EURGBP=X', 'flag': '🇪🇺🇬🇧'},
-    'EUR/JPY': {'ticker': 'EURJPY=X', 'flag': '🇪🇺🇯🇵'},
-    'GBP/JPY': {'ticker': 'GBPJPY=X', 'flag': '🇬🇧🇯🇵'},
-    'AUD/JPY': {'ticker': 'AUDJPY=X', 'flag': '🇦🇺🇯🇵'},
-    'CAD/JPY': {'ticker': 'CADJPY=X', 'flag': '🇨🇦🇯🇵'},
-    'EUR/AUD': {'ticker': 'EURAUD=X', 'flag': '🇪🇺🇦🇺'},
-    'GBP/AUD': {'ticker': 'GBPAUD=X', 'flag': '🇬🇧🇦🇺'},
+    'EUR/USD': {'ticker': 'EURUSD=X', 'alpha': 'EURUSD', 'flag': '🇪🇺🇺🇸'},
+    'GBP/USD': {'ticker': 'GBPUSD=X', 'alpha': 'GBPUSD', 'flag': '🇬🇧🇺🇸'},
+    'USD/JPY': {'ticker': 'USDJPY=X', 'alpha': 'USDJPY', 'flag': '🇺🇸🇯🇵'},
+    'AUD/USD': {'ticker': 'AUDUSD=X', 'alpha': 'AUDUSD', 'flag': '🇦🇺🇺🇸'},
+    'USD/CAD': {'ticker': 'USDCAD=X', 'alpha': 'USDCAD', 'flag': '🇺🇸🇨🇦'},
+    'USD/CHF': {'ticker': 'USDCHF=X', 'alpha': 'USDCHF', 'flag': '🇺🇸🇨🇭'},
+    'EUR/GBP': {'ticker': 'EURGBP=X', 'alpha': 'EURGBP', 'flag': '🇪🇺🇬🇧'},
+    'EUR/JPY': {'ticker': 'EURJPY=X', 'alpha': 'EURJPY', 'flag': '🇪🇺🇯🇵'},
+    'GBP/JPY': {'ticker': 'GBPJPY=X', 'alpha': 'GBPJPY', 'flag': '🇬🇧🇯🇵'},
+    'AUD/JPY': {'ticker': 'AUDJPY=X', 'alpha': 'AUDJPY', 'flag': '🇦🇺🇯🇵'},
+    'CAD/JPY': {'ticker': 'CADJPY=X', 'alpha': 'CADJPY', 'flag': '🇨🇦🇯🇵'},
+    'EUR/AUD': {'ticker': 'EURAUD=X', 'alpha': 'EURAUD', 'flag': '🇪🇺🇦🇺'},
+    'GBP/AUD': {'ticker': 'GBPAUD=X', 'alpha': 'GBPAUD', 'flag': '🇬🇧🇦🇺'},
 }
 
 user_selections = {}
-authorized_users = set()  # প্রতিবার স্টার্ট দিলে এটি ক্লিয়ার বা লক হয়ে যাবে
+authorized_users = set()
 active_signals = []
 auto_live_subscribers = set()
 
@@ -60,7 +60,7 @@ data_lock = asyncio.Lock()
 def get_detailed_market_status():
     """বাংলাদেশ সময় (UTC +6) অনুযায়ী রিয়েল-টাইম ফরেক্স মার্কেট স্ট্যাটাস"""
     bd_now = datetime.now(timezone.utc) + timedelta(hours=6)
-    weekday = bd_now.weekday()  # 0=সোমবার, 4=শুক্রবার, 5=শনিবার, 6=রবিবার
+    weekday = bd_now.weekday()
     hour = bd_now.hour
 
     if weekday == 5 or weekday == 6:
@@ -73,54 +73,42 @@ def get_detailed_market_status():
     return f"🟢 OPEN (Live) | Time: {current_time_formatted}"
 
 
-async def fetch_data(ticker, interval='1m', range_val='1d'):
-    """একাধিক API (Yahoo Finance ও Alpha Vantage ব্যাকআপ) সহ ব্লক-প্রুফ ও সেফ ডেটা ফেচিং ফাংশন"""
-    for attempt in range(2):
-        try:
-            url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={range_val}'
-            headers = {
-                'User-Agent': random.choice(USER_AGENTS),
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'en-US,en;q=0.5'
-            }
-            
-            response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=6)
-
-            if response.status_code == 200:
-                data = response.json()
-                result = data.get('chart', {}).get('result')
-                if result:
-                    quotes = result[0].get('indicators', {}).get('quote', [{}])[0]
-                    opens = quotes.get('open', [])
-                    highs = quotes.get('high', [])
-                    lows = quotes.get('low', [])
-                    closes = quotes.get('close', [])
-                    
-                    if closes:
-                        df = pd.DataFrame({
-                            'Open': opens,
-                            'High': highs,
-                            'Low': lows,
-                            'Close': closes,
-                        })
-                        df.dropna(inplace=True)
-                        if not df.empty and len(df) >= 15:
-                            return df
-            elif response.status_code == 429:
-                await asyncio.sleep(1.5 * (attempt + 1))
-                continue
-            
-            await asyncio.sleep(0.8)
-        except Exception:
-            await asyncio.sleep(1.0)
-
+# ==========================================
+# এপিআই ১: ইয়াহু ফাইনান্স ডেটা ফেচিং (Engine 1 Dedicated)
+# ==========================================
+async def fetch_yahoo_data(ticker, interval='1m', range_val='1d'):
     try:
-        symbol_clean = ticker.replace('=X', '')
-        from_curr = symbol_clean[:3]
-        to_curr = symbol_clean[3:]
-        backup_url = f'https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={from_curr}&to_symbol={to_curr}&interval=1min&apikey=demo'
-        
-        response = await asyncio.to_thread(requests.get, backup_url, timeout=5)
+        url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={range_val}'
+        headers = {'User-Agent': random.choice(USER_AGENTS)}
+        response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            result = data.get('chart', {}).get('result')
+            if result:
+                quotes = result[0].get('indicators', {}).get('quote', [{}])[0]
+                opens = quotes.get('open', [])
+                highs = quotes.get('high', [])
+                lows = quotes.get('low', [])
+                closes = quotes.get('close', [])
+                if closes:
+                    df = pd.DataFrame({'Open': opens, 'High': highs, 'Low': lows, 'Close': closes})
+                    df.dropna(inplace=True)
+                    if not df.empty and len(df) >= 15:
+                        return df
+    except Exception:
+        pass
+    return None
+
+
+# ==========================================
+# এপিআই ২: আলফা ভ্যানটেজ ডেটা ফেচিং (Engine 2 Dedicated)
+# ==========================================
+async def fetch_alpha_data(symbol_pair):
+    try:
+        from_curr = symbol_pair[:3]
+        to_curr = symbol_pair[3:]
+        url = f'https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={from_curr}&to_symbol={to_curr}&interval=1min&apikey=demo'
+        response = await asyncio.to_thread(requests.get, url, timeout=5)
         if response.status_code == 200:
             data = response.json()
             time_series = data.get('Time Series FX (1min)')
@@ -140,20 +128,51 @@ async def fetch_data(ticker, interval='1m', range_val='1d'):
                         return df
     except Exception:
         pass
-
     return None
 
 
 # ==========================================
-# ফিউচার সিগন্যাল ডুয়াল-ইঞ্জিন সিস্টেম
+# এপিআই ৩: স্বতন্ত্র ট্র্যাকিং ও ভেরিফিকেশন সোর্স (Win/Loss Checker)
+# ==========================================
+async def fetch_verification_data(symbol_pair):
+    try:
+        clean_sym = symbol_pair.replace('=X', '')
+        url = f"https://api.twelvedata.com/time_series?symbol={clean_sym}&interval=1min&outputsize=5&apikey=demo"
+        response = await asyncio.to_thread(requests.get, url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            values = data.get('values')
+            if values:
+                df_list = []
+                for v in values:
+                    df_list.append({
+                        'Open': float(v.get('open', 0)),
+                        'High': float(v.get('high', 0)),
+                        'Low': float(v.get('low', 0)),
+                        'Close': float(v.get('close', 0))
+                    })
+                if df_list:
+                    df = pd.DataFrame(df_list)
+                    df = df.iloc[::-1].reset_index(drop=True)
+                    return df
+    except Exception:
+        pass
+    
+    # ফলব্যাক
+    df_y = await fetch_yahoo_data(symbol_pair + '=X' if '=' not in symbol_pair else symbol_pair)
+    if df_y is not None:
+        return df_y
+    return None
+
+
+# ==========================================
+# ফিউচার সিগন্যাল ডুয়াল-ইঞ্জিন সিস্টেম (Engine 1: Yahoo | Engine 2: Alpha)
 # ==========================================
 
 async def analyze_future_engine1(ticker):
+    """প্রথম ইঞ্জিন: সম্পূর্ণ স্বতন্ত্রভাবে ইয়াহু ফাইনান্স এপিআই থেকে এনালাইসিস করবে"""
     try:
-        df = await fetch_data(ticker, interval='1m', range_val='1d')
-        if df is None or len(df) < 30:
-            df = await fetch_data(ticker, interval='5m', range_val='1d')
-            
+        df = await fetch_yahoo_data(ticker, interval='1m', range_val='1d')
         if df is None or len(df) < 30:
             return None
 
@@ -214,12 +233,10 @@ async def analyze_future_engine1(ticker):
         return None
 
 
-async def analyze_future_engine2(ticker):
+async def analyze_future_engine2(alpha_symbol):
+    """দ্বিতীয় ইঞ্জিন: সম্পূর্ণ স্বতন্ত্রভাবে আলফা ভ্যানটেজ এপিআই থেকে এনালাইসিস করবে"""
     try:
-        df = await fetch_data(ticker, interval='5m', range_val='1d')
-        if df is None or len(df) < 25:
-            df = await fetch_data(ticker, interval='1m', range_val='1d')
-
+        df = await fetch_alpha_data(alpha_symbol)
         if df is None or len(df) < 25:
             return None
 
@@ -272,25 +289,26 @@ async def analyze_future_engine2(ticker):
         return None
 
 
-async def analyze_future_market_combined(ticker):
-    action = await analyze_future_engine1(ticker)
-    if action:
-        return action
+async def analyze_future_market_combined(ticker, alpha_symbol):
+    action1 = await analyze_future_engine1(ticker)
+    if action1:
+        return action1
     
-    action = await analyze_future_engine2(ticker)
-    if action:
-        return action
+    action2 = await analyze_future_engine2(alpha_symbol)
+    if action2:
+        return action2
 
     return None
 
 
 # ==========================================
-# লাইভ অটো ফিড ডুয়াল-ইঞ্জিন সিস্টেম
+# লাইভ অটো ফিড ডুয়াল-ইঞ্জিন সিস্টেম (Engine 1: Yahoo | Engine 2: Alpha)
 # ==========================================
 
 async def analyze_live_feed_market_engine1(ticker):
+    """লাইভ ফিড ইঞ্জিন ১: ইয়াহু ফাইনান্স ডেটা দিয়ে বল্লিঙ্গার ও স্টোকাস্টিক চেক করবে"""
     try:
-        df = await fetch_data(ticker, interval='1m', range_val='1d')
+        df = await fetch_yahoo_data(ticker, interval='1m', range_val='1d')
         if df is None or len(df) < 20:
             return None
 
@@ -334,9 +352,10 @@ async def analyze_live_feed_market_engine1(ticker):
         return None
 
 
-async def analyze_live_feed_market_engine2(ticker):
+async def analyze_live_feed_market_engine2(alpha_symbol):
+    """লাইভ ফিড ইঞ্জিন ২: আলফা ভ্যানটেজ ডেটা দিয়ে সাপোর্ট/রেজিস্ট্যান্স ও রিজেকশন চেক করবে"""
     try:
-        df = await fetch_data(ticker, interval='1m', range_val='1d')
+        df = await fetch_alpha_data(alpha_symbol)
         if df is None or len(df) < 15:
             return None
 
@@ -366,14 +385,6 @@ async def analyze_live_feed_market_engine2(ticker):
         if cur_high >= res * 0.9995 and upper_wick > body_size * 2 and cur_close < cur_open:
             return 'PUT'
 
-        if prev_close < prev_open and cur_close > cur_open and cur_close > prev_open and cur_open < prev_close:
-            if cur_close >= sup * 1.001:
-                return 'CALL'
-
-        if prev_close > prev_open and cur_close < cur_open and cur_close < prev_open and cur_open > prev_close:
-            if cur_close <= res * 0.999:
-                return 'PUT'
-
         return None
     except Exception:
         return None
@@ -382,8 +393,6 @@ async def analyze_live_feed_market_engine2(ticker):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.message.from_user.id
-        
-        # প্রতিবার /start দিলে ইউজারকে অথরাইজড লিস্ট থেকে সরিয়ে দেওয়া হবে (ফোন লক হওয়ার মতো পাসওয়ার্ড চাইবে)
         if user_id in authorized_users:
             authorized_users.remove(user_id)
 
@@ -468,7 +477,7 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         keyboard = [
             [InlineKeyboardButton(toggle_label, callback_data='TOGGLE_AUTO')],
-            [InlineKeyboardButton('🔒 Lock / Exit Bot', callback_data='LOCK_BOT')]
+            [InlineKeyboardButton('🔒 Lock Bot', callback_data='LOCK_BOT')]
         ]
         row = []
         for pair_name, info in REAL_PAIRS.items():
@@ -522,7 +531,7 @@ async def show_main_menu_new(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         keyboard = [
             [InlineKeyboardButton(toggle_label, callback_data='TOGGLE_AUTO')],
-            [InlineKeyboardButton('🔒 Lock / Exit Bot', callback_data='LOCK_BOT')]
+            [InlineKeyboardButton('🔒 Lock Bot', callback_data='LOCK_BOT')]
         ]
         row = []
         for pair_name, info in REAL_PAIRS.items():
@@ -569,16 +578,26 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = query.data
         user_id = query.from_user.id
 
-        # যদি ইউজার লক বা ব্যাক দিতে গিয়ে সেশন আউট করতে চায়
         if data == 'LOCK_BOT':
             if user_id in authorized_users:
                 authorized_users.remove(user_id)
-            await query.message.edit_text("🔒 *Bot Locked Successfully!* Type /start to unlock with password.", parse_mode='Markdown')
+            
+            # স্টাইলিশ পপআপ বা রেজাল্ট বক্স ডিজাইন (SIAM TRADERS OFFLINE - SESSION CLOSED)
+            offline_popup_text = """
+╔═════════════════════════════════╗
+║     🔒 SIAM TRADERS OFFLINE     ║
+║        SESSION CLOSED           ║
+╚═════════════════════════════════╝
+✨ *Status:* Bot is securely locked.
+🔐 *Security:* All sessions cleared.
+📱 Type /start to unlock and enter password again.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+"""
+            await query.message.edit_text(offline_popup_text, parse_mode='Markdown')
             return
 
-        # প্রতিবার যেকোনো বাটনে ক্লিক করার আগে চেক করবে পাসওয়ার্ড দেওয়া আছে কি না
         if user_id not in authorized_users:
-            await query.message.edit_text("🔒 *Session Expired / Locked!* Please type /start and enter password to continue.", parse_mode='Markdown')
+            await query.message.edit_text("🔒 *Session Locked!* Please type /start and enter password to continue.", parse_mode='Markdown')
             return
 
         if data == 'TOGGLE_AUTO':
@@ -677,11 +696,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             for _ in range(count):
                 action = None
-                for _retry in range(3):
-                    action = await analyze_future_market_combined(info['ticker'])
+                for _retry in range(2):
+                    action = await analyze_future_market_combined(info['ticker'], info['alpha'])
                     if action:
                         break
-                    await asyncio.sleep(0.8)
+                    await asyncio.sleep(0.4)
 
                 if not action:
                     continue
@@ -695,6 +714,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 session_items.append({
                     'pair': pair_name,
                     'ticker': info['ticker'],
+                    'alpha': info['alpha'],
                     'action': action,
                     'time': target_time_str,
                     'datetime_obj': base_time,
@@ -757,6 +777,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             active_signals.append({
                                 'pair': sig['pair'],
                                 'ticker': sig['ticker'],
+                                'alpha': sig['alpha'],
                                 'action': sig['action'],
                                 'time': sig['time'],
                                 'datetime_obj': sig['datetime_obj'],
@@ -807,9 +828,9 @@ async def background_live_auto_scanner(app):
                 await asyncio.sleep(60)
                 continue
 
-            if auto_live_subscribers or TARGET_GROUP_IDS:
+            if auto_live_subscribers:
                 pair_keys = list(REAL_PAIRS.keys())
-                selected_sample = random.sample(pair_keys, min(3, len(pair_keys)))
+                selected_sample = random.sample(pair_keys, min(2, len(pair_keys)))
                 
                 for pair_name in selected_sample:
                     info = REAL_PAIRS[pair_name]
@@ -820,15 +841,15 @@ async def background_live_auto_scanner(app):
                     for _retry in range(2):
                         action = await analyze_live_feed_market_engine1(info['ticker'])
                         if action:
-                            engine_used = "Bollinger + Stochastic"
+                            engine_used = "Bollinger + Stochastic (Engine 1)"
                             break
                         
-                        action = await analyze_live_feed_market_engine2(info['ticker'])
+                        action = await analyze_live_feed_market_engine2(info['alpha'])
                         if action:
-                            engine_used = "Support/Resistance + Rejection"
+                            engine_used = "Support/Resistance + Rejection (Engine 2)"
                             break
 
-                        await asyncio.sleep(0.8)
+                        await asyncio.sleep(0.5)
 
                     if not action:
                         continue
@@ -868,6 +889,7 @@ async def background_live_auto_scanner(app):
                                 active_signals.append({
                                     'pair': pair_name,
                                     'ticker': info['ticker'],
+                                    'alpha': info['alpha'],
                                     'action': action,
                                     'time': target_time_str,
                                     'datetime_obj': target_time,
@@ -878,39 +900,37 @@ async def background_live_auto_scanner(app):
                                     'msg_id': sent_msg.message_id,
                                 })
                             await asyncio.sleep(0.1)
-                        except RetryAfter as e:
-                            await asyncio.sleep(e.retry_after)
                         except Exception:
                             pass
 
-                    if auto_live_subscribers:
-                        for group_id in TARGET_GROUP_IDS:
-                            try:
-                                g_msg = await app.bot.send_message(
-                                    chat_id=group_id, text=signal_box_text, parse_mode='Markdown'
-                                )
-                                async with data_lock:
-                                    active_signals.append({
-                                        'pair': pair_name,
-                                        'ticker': info['ticker'],
-                                        'action': action,
-                                        'time': target_time_str,
-                                        'datetime_obj': target_time,
-                                        'status': '(Pending)',
-                                        'flag': flag,
-                                        'checked': False,
-                                        'chat_id': group_id,
-                                        'msg_id': g_msg.message_id,
-                                    })
-                                await asyncio.sleep(0.1)
-                            except Exception:
-                                pass
+                    for group_id in TARGET_GROUP_IDS:
+                        try:
+                            g_msg = await app.bot.send_message(
+                                chat_id=group_id, text=signal_box_text, parse_mode='Markdown'
+                            )
+                            async with data_lock:
+                                active_signals.append({
+                                    'pair': pair_name,
+                                    'ticker': info['ticker'],
+                                    'alpha': info['alpha'],
+                                    'action': action,
+                                    'time': target_time_str,
+                                    'datetime_obj': target_time,
+                                    'status': '(Pending)',
+                                    'flag': flag,
+                                    'checked': False,
+                                    'chat_id': group_id,
+                                    'msg_id': g_msg.message_id,
+                                })
+                            await asyncio.sleep(0.1)
+                        except Exception:
+                            pass
                     
-                    await asyncio.sleep(25)
+                    await asyncio.sleep(30)
         except Exception as e:
             print(f'Auto scanner error: {e}')
 
-        await asyncio.sleep(15)
+        await asyncio.sleep(20)
 
 
 async def background_live_tracker(app):
@@ -939,9 +959,10 @@ async def background_live_tracker(app):
                         updated_any = False
                         for sig in sigs:
                             if not sig['checked'] and current_time_str >= sig['time']:
-                                df = await fetch_data(sig['ticker'], interval='1m', range_val='1d')
-                                if df is None:
-                                    df = await fetch_data(sig['ticker'], interval='5m', range_val='1d')
+                                # স্বাধীন ৩য় এপিআই দিয়ে উইন/লস চেক করা
+                                df = await fetch_verification_data(sig['ticker'])
+                                if df is None or len(df) < 2:
+                                    df = await fetch_alpha_data(sig['alpha'])
 
                                 if df is not None and len(df) >= 2:
                                     sig['checked'] = True
@@ -1041,7 +1062,7 @@ async def main_async():
         asyncio.create_task(background_live_tracker(app))
         asyncio.create_task(background_live_auto_scanner(app))
 
-        print('SIAM TRADERS Secure Luxury Forex Bot running with Dual-Engine Future & Live Systems...')
+        print('SIAM TRADERS Secure Luxury Forex Bot running with Independent Multi-Engine Architecture...')
         await app.initialize()
         await app.start()
         await app.updater.start_polling()
