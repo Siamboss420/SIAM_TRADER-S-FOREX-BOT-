@@ -74,71 +74,73 @@ def get_detailed_market_status():
 
 
 # ==========================================
-# এপিআই ১: ইয়াহু ফাইনান্স ডেটা ফেচিং (Engine 1 Dedicated)
+# অ্যান্টি-ব্লক ও অটো-রিসেন্ট রোটেশন সহ ডেটা ফেচিং সিস্টেম
 # ==========================================
-async def fetch_yahoo_data(ticker, interval='1m', range_val='1d'):
-    try:
-        url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={range_val}'
-        headers = {'User-Agent': random.choice(USER_AGENTS)}
-        response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            result = data.get('chart', {}).get('result')
-            if result:
-                quotes = result[0].get('indicators', {}).get('quote', [{}])[0]
-                opens = quotes.get('open', [])
-                highs = quotes.get('high', [])
-                lows = quotes.get('low', [])
-                closes = quotes.get('close', [])
-                if closes:
-                    df = pd.DataFrame({'Open': opens, 'High': highs, 'Low': lows, 'Close': closes})
-                    df.dropna(inplace=True)
-                    if not df.empty and len(df) >= 15:
-                        return df
-    except Exception:
-        pass
+async def fetch_yahoo_data_safe(ticker, interval='1m', range_val='1d'):
+    for attempt in range(2):
+        try:
+            url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={range_val}'
+            headers = {'User-Agent': random.choice(USER_AGENTS)}
+            response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=4)
+            if response.status_code == 200:
+                data = response.json()
+                result = data.get('chart', {}).get('result')
+                if result:
+                    quotes = result[0].get('indicators', {}).get('quote', [{}])[0]
+                    opens = quotes.get('open', [])
+                    highs = quotes.get('high', [])
+                    lows = quotes.get('low', [])
+                    closes = quotes.get('close', [])
+                    if closes:
+                        df = pd.DataFrame({'Open': opens, 'High': highs, 'Low': lows, 'Close': closes})
+                        df.dropna(inplace=True)
+                        if not df.empty and len(df) >= 15:
+                            return df
+            elif response.status_code == 429:
+                await asyncio.sleep(1.5 * (attempt + 1))
+                continue
+        except Exception:
+            await asyncio.sleep(0.5)
     return None
 
 
-# ==========================================
-# এপিআই ২: আলফা ভ্যানটেজ ডেটা ফেচিং (Engine 2 Dedicated)
-# ==========================================
-async def fetch_alpha_data(symbol_pair):
-    try:
-        from_curr = symbol_pair[:3]
-        to_curr = symbol_pair[3:]
-        url = f'https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={from_curr}&to_symbol={to_curr}&interval=1min&apikey=demo'
-        response = await asyncio.to_thread(requests.get, url, timeout=5)
-        if response.status_code == 200:
-            data = response.json()
-            time_series = data.get('Time Series FX (1min)')
-            if time_series:
-                df_list = []
-                for time_str, values in list(time_series.items())[:50]:
-                    df_list.append({
-                        'Open': float(values.get('1. open', 0)),
-                        'High': float(values.get('2. high', 0)),
-                        'Low': float(values.get('3. low', 0)),
-                        'Close': float(values.get('4. close', 0))
-                    })
-                if df_list:
-                    df = pd.DataFrame(df_list)
-                    df = df.iloc[::-1].reset_index(drop=True)
-                    if len(df) >= 15:
-                        return df
-    except Exception:
-        pass
+async def fetch_alpha_data_safe(symbol_pair):
+    for attempt in range(2):
+        try:
+            from_curr = symbol_pair[:3]
+            to_curr = symbol_pair[3:]
+            url = f'https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={from_curr}&to_symbol={to_curr}&interval=1min&apikey=demo'
+            response = await asyncio.to_thread(requests.get, url, timeout=4)
+            if response.status_code == 200:
+                data = response.json()
+                time_series = data.get('Time Series FX (1min)')
+                if time_series:
+                    df_list = []
+                    for time_str, values in list(time_series.items())[:50]:
+                        df_list.append({
+                            'Open': float(values.get('1. open', 0)),
+                            'High': float(values.get('2. high', 0)),
+                            'Low': float(values.get('3. low', 0)),
+                            'Close': float(values.get('4. close', 0))
+                        })
+                    if df_list:
+                        df = pd.DataFrame(df_list)
+                        df = df.iloc[::-1].reset_index(drop=True)
+                        if len(df) >= 15:
+                            return df
+            elif response.status_code == 429:
+                await asyncio.sleep(2.0)
+                continue
+        except Exception:
+            await asyncio.sleep(0.5)
     return None
 
 
-# ==========================================
-# এপিআই ৩: স্বতন্ত্র ট্র্যাকিং ও ভেরিফিকেশন সোর্স (Win/Loss Checker)
-# ==========================================
-async def fetch_verification_data(symbol_pair):
+async def fetch_twelve_data_safe(symbol_pair):
     try:
         clean_sym = symbol_pair.replace('=X', '')
-        url = f"https://api.twelvedata.com/time_series?symbol={clean_sym}&interval=1min&outputsize=5&apikey=demo"
-        response = await asyncio.to_thread(requests.get, url, timeout=5)
+        url = f"https://api.twelvedata.com/time_series?symbol={clean_sym}&interval=1min&outputsize=15&apikey=demo"
+        response = await asyncio.to_thread(requests.get, url, timeout=4)
         if response.status_code == 200:
             data = response.json()
             values = data.get('values')
@@ -154,13 +156,27 @@ async def fetch_verification_data(symbol_pair):
                 if df_list:
                     df = pd.DataFrame(df_list)
                     df = df.iloc[::-1].reset_index(drop=True)
-                    return df
+                    if len(df) >= 10:
+                        return df
     except Exception:
         pass
-    
-    df_y = await fetch_yahoo_data(symbol_pair + '=X' if '=' not in symbol_pair else symbol_pair)
-    if df_y is not None:
-        return df_y
+    return None
+
+
+async def get_robust_market_data(ticker, alpha_symbol):
+    """ব্লক-প্রুফ মাল্টি-এপিআই অটো-রিসেন্ট ও ফলব্যাক রোটেশন ম্যানেজার"""
+    df = await fetch_yahoo_data_safe(ticker)
+    if df is not None and len(df) >= 15:
+        return df
+
+    df = await fetch_alpha_data_safe(alpha_symbol)
+    if df is not None and len(df) >= 15:
+        return df
+
+    df = await fetch_twelve_data_safe(alpha_symbol)
+    if df is not None and len(df) >= 10:
+        return df
+
     return None
 
 
@@ -168,9 +184,9 @@ async def fetch_verification_data(symbol_pair):
 # ফিউচার সিগন্যাল ডুয়াল-ইঞ্জিন সিস্টেম
 # ==========================================
 
-async def analyze_future_engine1(ticker):
+async def analyze_future_engine1(ticker, alpha_symbol):
     try:
-        df = await fetch_yahoo_data(ticker, interval='1m', range_val='1d')
+        df = await get_robust_market_data(ticker, alpha_symbol)
         if df is None or len(df) < 30:
             return None
 
@@ -231,9 +247,9 @@ async def analyze_future_engine1(ticker):
         return None
 
 
-async def analyze_future_engine2(alpha_symbol):
+async def analyze_future_engine2(alpha_symbol, ticker):
     try:
-        df = await fetch_alpha_data(alpha_symbol)
+        df = await get_robust_market_data(ticker, alpha_symbol)
         if df is None or len(df) < 25:
             return None
 
@@ -287,11 +303,11 @@ async def analyze_future_engine2(alpha_symbol):
 
 
 async def analyze_future_market_combined(ticker, alpha_symbol):
-    action1 = await analyze_future_engine1(ticker)
+    action1 = await analyze_future_engine1(ticker, alpha_symbol)
     if action1:
         return action1
     
-    action2 = await analyze_future_engine2(alpha_symbol)
+    action2 = await analyze_future_engine2(alpha_symbol, ticker)
     if action2:
         return action2
 
@@ -302,9 +318,9 @@ async def analyze_future_market_combined(ticker, alpha_symbol):
 # লাইভ অটো ফিড ডুয়াল-ইঞ্জিন সিস্টেম
 # ==========================================
 
-async def analyze_live_feed_market_engine1(ticker):
+async def analyze_live_feed_market_engine1(ticker, alpha_symbol):
     try:
-        df = await fetch_yahoo_data(ticker, interval='1m', range_val='1d')
+        df = await get_robust_market_data(ticker, alpha_symbol)
         if df is None or len(df) < 20:
             return None
 
@@ -348,9 +364,9 @@ async def analyze_live_feed_market_engine1(ticker):
         return None
 
 
-async def analyze_live_feed_market_engine2(alpha_symbol):
+async def analyze_live_feed_market_engine2(alpha_symbol, ticker):
     try:
-        df = await fetch_alpha_data(alpha_symbol)
+        df = await get_robust_market_data(ticker, alpha_symbol)
         if df is None or len(df) < 15:
             return None
 
@@ -429,7 +445,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bd_now = datetime.now(timezone.utc) + timedelta(hours=6)
             time_str = bd_now.strftime('%I:%M %p (%d %b %Y)')
             
-            # পাসওয়ার্ড দেওয়ার পর গ্রুপ এবং ইনবক্সে স্টাইলিশ অনলাইন সেশন নোটিশ পাঠানো
             online_popup_text = f"""
 ╔═════════════════════════════════╗
 ║     🟢 SIAM TRADERS ONLINE      ║
@@ -438,7 +453,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🇧🇩 TIME: `{time_str}`
 🌐 MARKET STATUS: `{market_status}`
 ✨ *Status:* Bot is active & online.
-🚀 *Engine:* Dual-Engine VIP Systems Ready!
+🚀 *Engine:* Anti-Block Multi-API Ready!
 ╔═════════════════════════════╗
 ║ DEVELOPER & OWNER: SIAM TRADERS ║
 ╚═════════════════════════════╝
@@ -594,7 +609,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ║ DEVELOPER & OWNER: SIAM TRADERS ║
 ╚═════════════════════════════╝
 """
-            # ইনবক্সে এবং টার্গেটেড গ্রুপে অফলাইন নোটিশ পাঠানো
             await query.message.edit_text(offline_popup_text, parse_mode='Markdown')
             
             for group_id in TARGET_GROUP_IDS:
@@ -708,7 +722,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     action = await analyze_future_market_combined(info['ticker'], info['alpha'])
                     if action:
                         break
-                    await asyncio.sleep(0.4)
+                    await asyncio.sleep(0.3)
 
                 if not action:
                     continue
@@ -847,17 +861,17 @@ async def background_live_auto_scanner(app):
                     engine_used = ""
                     
                     for _retry in range(2):
-                        action = await analyze_live_feed_market_engine1(info['ticker'])
+                        action = await analyze_live_feed_market_engine1(info['ticker'], info['alpha'])
                         if action:
                             engine_used = "Bollinger + Stochastic (Engine 1)"
                             break
                         
-                        action = await analyze_live_feed_market_engine2(info['alpha'])
+                        action = await analyze_live_feed_market_engine2(info['alpha'], info['ticker'])
                         if action:
                             engine_used = "Support/Resistance + Rejection (Engine 2)"
                             break
 
-                        await asyncio.sleep(0.5)
+                        await asyncio.sleep(0.4)
 
                     if not action:
                         continue
@@ -967,9 +981,7 @@ async def background_live_tracker(app):
                         updated_any = False
                         for sig in sigs:
                             if not sig['checked'] and current_time_str >= sig['time']:
-                                df = await fetch_verification_data(sig['ticker'])
-                                if df is None or len(df) < 2:
-                                    df = await fetch_alpha_data(sig['alpha'])
+                                df = await get_robust_market_data(sig['ticker'], sig['alpha'])
 
                                 if df is not None and len(df) >= 2:
                                     sig['checked'] = True
@@ -1069,7 +1081,7 @@ async def main_async():
         asyncio.create_task(background_live_tracker(app))
         asyncio.create_task(background_live_auto_scanner(app))
 
-        print('SIAM TRADERS Secure Luxury Forex Bot running with Independent Multi-Engine Architecture...')
+        print('SIAM TRADERS Secure Luxury Forex Bot running with Anti-Block Multi-API Circuit Breaker...')
         await app.initialize()
         await app.start()
         await app.updater.start_polling()
