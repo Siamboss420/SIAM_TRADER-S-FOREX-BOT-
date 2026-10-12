@@ -158,7 +158,6 @@ async def fetch_verification_data(symbol_pair):
     except Exception:
         pass
     
-    # ফলব্যাক
     df_y = await fetch_yahoo_data(symbol_pair + '=X' if '=' not in symbol_pair else symbol_pair)
     if df_y is not None:
         return df_y
@@ -166,11 +165,10 @@ async def fetch_verification_data(symbol_pair):
 
 
 # ==========================================
-# ফিউচার সিগন্যাল ডুয়াল-ইঞ্জিন সিস্টেম (Engine 1: Yahoo | Engine 2: Alpha)
+# ফিউচার সিগন্যাল ডুয়াল-ইঞ্জিন সিস্টেম
 # ==========================================
 
 async def analyze_future_engine1(ticker):
-    """প্রথম ইঞ্জিন: সম্পূর্ণ স্বতন্ত্রভাবে ইয়াহু ফাইনান্স এপিআই থেকে এনালাইসিস করবে"""
     try:
         df = await fetch_yahoo_data(ticker, interval='1m', range_val='1d')
         if df is None or len(df) < 30:
@@ -234,7 +232,6 @@ async def analyze_future_engine1(ticker):
 
 
 async def analyze_future_engine2(alpha_symbol):
-    """দ্বিতীয় ইঞ্জিন: সম্পূর্ণ স্বতন্ত্রভাবে আলফা ভ্যানটেজ এপিআই থেকে এনালাইসিস করবে"""
     try:
         df = await fetch_alpha_data(alpha_symbol)
         if df is None or len(df) < 25:
@@ -302,11 +299,10 @@ async def analyze_future_market_combined(ticker, alpha_symbol):
 
 
 # ==========================================
-# লাইভ অটো ফিড ডুয়াল-ইঞ্জিন সিস্টেম (Engine 1: Yahoo | Engine 2: Alpha)
+# লাইভ অটো ফিড ডুয়াল-ইঞ্জিন সিস্টেম
 # ==========================================
 
 async def analyze_live_feed_market_engine1(ticker):
-    """লাইভ ফিড ইঞ্জিন ১: ইয়াহু ফাইনান্স ডেটা দিয়ে বল্লিঙ্গার ও স্টোকাস্টিক চেক করবে"""
     try:
         df = await fetch_yahoo_data(ticker, interval='1m', range_val='1d')
         if df is None or len(df) < 20:
@@ -353,7 +349,6 @@ async def analyze_live_feed_market_engine1(ticker):
 
 
 async def analyze_live_feed_market_engine2(alpha_symbol):
-    """লাইভ ফিড ইঞ্জিন ২: আলফা ভ্যানটেজ ডেটা দিয়ে সাপোর্ট/রেজিস্ট্যান্স ও রিজেকশন চেক করবে"""
     try:
         df = await fetch_alpha_data(alpha_symbol)
         if df is None or len(df) < 15:
@@ -434,18 +429,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             bd_now = datetime.now(timezone.utc) + timedelta(hours=6)
             time_str = bd_now.strftime('%I:%M %p (%d %b %Y)')
             
-            market_notice_text = f"""
-👑 === SIAM TRADERS MARKET STATUS NOTICE === 👑
-
+            # পাসওয়ার্ড দেওয়ার পর গ্রুপ এবং ইনবক্সে স্টাইলিশ অনলাইন সেশন নোটিশ পাঠানো
+            online_popup_text = f"""
+╔═════════════════════════════════╗
+║     🟢 SIAM TRADERS ONLINE      ║
+║       SESSION STARTED           ║
+╚═════════════════════════════════╝
 🇧🇩 TIME: `{time_str}`
 🌐 MARKET STATUS: `{market_status}`
+✨ *Status:* Bot is active & online.
+🚀 *Engine:* Dual-Engine VIP Systems Ready!
 ╔═════════════════════════════╗
 ║ DEVELOPER & OWNER: SIAM TRADERS ║
 ╚═════════════════════════════╝
 """
             for group_id in TARGET_GROUP_IDS:
                 try:
-                    await context.bot.send_message(chat_id=group_id, text=market_notice_text, parse_mode='Markdown')
+                    await context.bot.send_message(chat_id=group_id, text=online_popup_text, parse_mode='Markdown')
                 except Exception:
                     pass
 
@@ -582,7 +582,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if user_id in authorized_users:
                 authorized_users.remove(user_id)
             
-            # স্টাইলিশ পপআপ বা রেজাল্ট বক্স ডিজাইন (SIAM TRADERS OFFLINE - SESSION CLOSED)
             offline_popup_text = """
 ╔═════════════════════════════════╗
 ║     🔒 SIAM TRADERS OFFLINE     ║
@@ -591,9 +590,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ✨ *Status:* Bot is securely locked.
 🔐 *Security:* All sessions cleared.
 📱 Type /start to unlock and enter password again.
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+╔═════════════════════════════╗
+║ DEVELOPER & OWNER: SIAM TRADERS ║
+╚═════════════════════════════╝
 """
+            # ইনবক্সে এবং টার্গেটেড গ্রুপে অফলাইন নোটিশ পাঠানো
             await query.message.edit_text(offline_popup_text, parse_mode='Markdown')
+            
+            for group_id in TARGET_GROUP_IDS:
+                try:
+                    await context.bot.send_message(chat_id=group_id, text=offline_popup_text, parse_mode='Markdown')
+                except Exception:
+                    pass
             return
 
         if user_id not in authorized_users:
@@ -959,7 +967,6 @@ async def background_live_tracker(app):
                         updated_any = False
                         for sig in sigs:
                             if not sig['checked'] and current_time_str >= sig['time']:
-                                # স্বাধীন ৩য় এপিআই দিয়ে উইন/লস চেক করা
                                 df = await fetch_verification_data(sig['ticker'])
                                 if df is None or len(df) < 2:
                                     df = await fetch_alpha_data(sig['alpha'])
