@@ -21,7 +21,7 @@ TELEGRAM_BOT_TOKEN = '8817403825:AAE--3DW1JyBljPr1FQFnwsD5bEGUnSfBQs'
 # সিক্রেট পাসওয়ার্ড
 CORRECT_PASSWORD = 'SIAM MEGHLA'
 
-# তোমার নতুন গ্রুপের চ্যাট আইডি
+# আপনার নতুন গ্রুপের চ্যাট আইডি
 TARGET_GROUP_IDS = [-1004294815851]
 
 # ব্লক প্রুফ ইউজার এজেন্ট লিস্ট
@@ -49,7 +49,7 @@ REAL_PAIRS = {
 }
 
 user_selections = {}
-authorized_users = set()
+authorized_users = set()  # প্রতিবার স্টার্ট দিলে এটি ক্লিয়ার বা লক হয়ে যাবে
 active_signals = []
 auto_live_subscribers = set()
 
@@ -74,8 +74,8 @@ def get_detailed_market_status():
 
 
 async def fetch_data(ticker, interval='1m', range_val='1d'):
-    """Yahoo API থেকে সম্পূর্ণ Async, ব্লক-প্রুফ ও সেফ ডেটা ফেচিং ফাংশন"""
-    for attempt in range(3):
+    """একাধিক API (Yahoo Finance ও Alpha Vantage ব্যাকআপ) সহ ব্লক-প্রুফ ও সেফ ডেটা ফেচিং ফাংশন"""
+    for attempt in range(2):
         try:
             url = f'https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?interval={interval}&range={range_val}'
             headers = {
@@ -84,7 +84,7 @@ async def fetch_data(ticker, interval='1m', range_val='1d'):
                 'Accept-Language': 'en-US,en;q=0.5'
             }
             
-            response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=8)
+            response = await asyncio.to_thread(requests.get, url, headers=headers, timeout=6)
 
             if response.status_code == 200:
                 data = response.json()
@@ -96,25 +96,51 @@ async def fetch_data(ticker, interval='1m', range_val='1d'):
                     lows = quotes.get('low', [])
                     closes = quotes.get('close', [])
                     
-                    if not closes:
-                        return None
-                        
-                    df = pd.DataFrame({
-                        'Open': opens,
-                        'High': highs,
-                        'Low': lows,
-                        'Close': closes,
-                    })
-                    df.dropna(inplace=True)
-                    if not df.empty and len(df) >= 15:
-                        return df
+                    if closes:
+                        df = pd.DataFrame({
+                            'Open': opens,
+                            'High': highs,
+                            'Low': lows,
+                            'Close': closes,
+                        })
+                        df.dropna(inplace=True)
+                        if not df.empty and len(df) >= 15:
+                            return df
             elif response.status_code == 429:
-                await asyncio.sleep(2 * (attempt + 1))
+                await asyncio.sleep(1.5 * (attempt + 1))
                 continue
             
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(0.8)
         except Exception:
-            await asyncio.sleep(1.2)
+            await asyncio.sleep(1.0)
+
+    try:
+        symbol_clean = ticker.replace('=X', '')
+        from_curr = symbol_clean[:3]
+        to_curr = symbol_clean[3:]
+        backup_url = f'https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={from_curr}&to_symbol={to_curr}&interval=1min&apikey=demo'
+        
+        response = await asyncio.to_thread(requests.get, backup_url, timeout=5)
+        if response.status_code == 200:
+            data = response.json()
+            time_series = data.get('Time Series FX (1min)')
+            if time_series:
+                df_list = []
+                for time_str, values in list(time_series.items())[:50]:
+                    df_list.append({
+                        'Open': float(values.get('1. open', 0)),
+                        'High': float(values.get('2. high', 0)),
+                        'Low': float(values.get('3. low', 0)),
+                        'Close': float(values.get('4. close', 0))
+                    })
+                if df_list:
+                    df = pd.DataFrame(df_list)
+                    df = df.iloc[::-1].reset_index(drop=True)
+                    if len(df) >= 15:
+                        return df
+    except Exception:
+        pass
+
     return None
 
 
@@ -356,9 +382,10 @@ async def analyze_live_feed_market_engine2(ticker):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.message.from_user.id
+        
+        # প্রতিবার /start দিলে ইউজারকে অথরাইজড লিস্ট থেকে সরিয়ে দেওয়া হবে (ফোন লক হওয়ার মতো পাসওয়ার্ড চাইবে)
         if user_id in authorized_users:
-            await show_main_menu(update, context)
-            return
+            authorized_users.remove(user_id)
 
         welcome_text = """
 👑 === SIAM TRADERS LUXURY FOREX AI === 👑
@@ -425,12 +452,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        user_id = update.effective_user.id if update.effective_user else 0
+        if user_id not in authorized_users:
+            if update.callback_query:
+                await update.callback_query.message.reply_text("🔒 Session locked! Please type /start to enter password again.", parse_mode='Markdown')
+            return
+
         market_status = get_detailed_market_status()
         bd_now = datetime.now(timezone.utc) + timedelta(hours=6)
         time_str = bd_now.strftime('%I:%M %p')
         
+        is_active = user_id in auto_live_subscribers
+        status_text = "🟢 ACTIVE" if is_active else "⚪ OFF"
+        toggle_label = "⚡ Live Auto Signal Feed: [ ON ]" if is_active else "⚡ Live Auto Signal Feed: [ OFF ]"
+
         keyboard = [
-            [InlineKeyboardButton('⚡ Live Auto Signal Feed (ON/OFF)', callback_data='TOGGLE_AUTO')]
+            [InlineKeyboardButton(toggle_label, callback_data='TOGGLE_AUTO')],
+            [InlineKeyboardButton('🔒 Lock / Exit Bot', callback_data='LOCK_BOT')]
         ]
         row = []
         for pair_name, info in REAL_PAIRS.items():
@@ -443,8 +481,6 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append(row)
 
         reply_markup = InlineKeyboardMarkup(keyboard)
-        user_id = update.effective_user.id if update.effective_user else 0
-        status_text = "🟢 ACTIVE" if user_id in auto_live_subscribers else "⚪ OFF"
         
         menu_text = f"""
 👑 === SIAM TRADERS LUXURY FOREX AI === 👑
@@ -472,12 +508,21 @@ async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def show_main_menu_new(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
+        user_id = update.effective_user.id if update.effective_user else 0
+        if user_id not in authorized_users:
+            return
+
         market_status = get_detailed_market_status()
         bd_now = datetime.now(timezone.utc) + timedelta(hours=6)
         time_str = bd_now.strftime('%I:%M %p')
         
+        is_active = user_id in auto_live_subscribers
+        status_text = "🟢 ACTIVE" if is_active else "⚪ OFF"
+        toggle_label = "⚡ Live Auto Signal Feed: [ ON ]" if is_active else "⚡ Live Auto Signal Feed: [ OFF ]"
+
         keyboard = [
-            [InlineKeyboardButton('⚡ Live Auto Signal Feed (ON/OFF)', callback_data='TOGGLE_AUTO')]
+            [InlineKeyboardButton(toggle_label, callback_data='TOGGLE_AUTO')],
+            [InlineKeyboardButton('🔒 Lock / Exit Bot', callback_data='LOCK_BOT')]
         ]
         row = []
         for pair_name, info in REAL_PAIRS.items():
@@ -490,8 +535,6 @@ async def show_main_menu_new(update: Update, context: ContextTypes.DEFAULT_TYPE)
             keyboard.append(row)
 
         reply_markup = InlineKeyboardMarkup(keyboard)
-        user_id = update.effective_user.id if update.effective_user else 0
-        status_text = "🟢 ACTIVE" if user_id in auto_live_subscribers else "⚪ OFF"
         
         menu_text = f"""
 👑 === SIAM TRADERS LUXURY FOREX AI === 👑
@@ -526,17 +569,23 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         data = query.data
         user_id = query.from_user.id
 
+        # যদি ইউজার লক বা ব্যাক দিতে গিয়ে সেশন আউট করতে চায়
+        if data == 'LOCK_BOT':
+            if user_id in authorized_users:
+                authorized_users.remove(user_id)
+            await query.message.edit_text("🔒 *Bot Locked Successfully!* Type /start to unlock with password.", parse_mode='Markdown')
+            return
+
+        # প্রতিবার যেকোনো বাটনে ক্লিক করার আগে চেক করবে পাসওয়ার্ড দেওয়া আছে কি না
+        if user_id not in authorized_users:
+            await query.message.edit_text("🔒 *Session Expired / Locked!* Please type /start and enter password to continue.", parse_mode='Markdown')
+            return
+
         if data == 'TOGGLE_AUTO':
             market_status = get_detailed_market_status()
             if "CLOSED" in market_status:
                 closed_msg = f"⚠️ *Warning:* Forex Market is currently `{market_status}`! Auto signals might be paused until market opens."
                 await query.message.reply_text(closed_msg, parse_mode='Markdown')
-                
-                for group_id in TARGET_GROUP_IDS:
-                    try:
-                        await context.bot.send_message(chat_id=group_id, text=closed_msg, parse_mode='Markdown')
-                    except Exception:
-                        pass
 
             if user_id in auto_live_subscribers:
                 auto_live_subscribers.remove(user_id)
@@ -547,6 +596,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "🚀 *Live Dual-Engine Auto Signals Started!*",
                     parse_mode='Markdown',
                 )
+            
+            await show_main_menu(update, context)
             return
 
         if data.startswith('PAIR_'):
@@ -611,12 +662,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if "CLOSED" in market_status:
                 closed_market_msg = f"⚠️ *Market is currently {market_status}!*\nReal-time forex market is closed right now. Signals may not process accurately until market opens."
                 await query.message.edit_text(closed_market_msg, parse_mode='Markdown')
-                
-                for group_id in TARGET_GROUP_IDS:
-                    try:
-                        await context.bot.send_message(chat_id=group_id, text=closed_market_msg, parse_mode='Markdown')
-                    except Exception:
-                        pass
                 return
 
             pair_name = user_data['pair']
@@ -636,7 +681,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     action = await analyze_future_market_combined(info['ticker'])
                     if action:
                         break
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(0.8)
 
                 if not action:
                     continue
@@ -659,7 +704,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 })
 
                 base_time += timedelta(minutes=gap)
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.2)
 
             if not signals_generated:
                 await query.message.edit_text(
@@ -697,17 +742,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 ╚═════════════════════════════╝
 """
 
-            # প্রাইভেট চ্যাটের জন্য ব্যাক বাটন যুক্ত মেসেজ এডিট করা
             back_keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton('🔙 Return to Main Menu', callback_data='BACK_TO_MENU')]
+                [InlineKeyboardButton('🔙 Return to Main Menu', callback_data='BACK_TO_MENU'),
+                 InlineKeyboardButton('🔒 Lock Bot', callback_data='LOCK_BOT')]
             ])
 
             sent_message = await query.message.edit_text(final_text, reply_markup=back_keyboard, parse_mode='Markdown')
 
-            # গ্রুপ চ্যাটের জন্য কোনো বাটন ছাড়াই ক্লিন মেসেজ পাঠানো
             for group_id in TARGET_GROUP_IDS:
                 try:
-                    await context.bot.send_message(chat_id=group_id, text=final_text, parse_mode='Markdown', reply_markup=None)
+                    g_msg = await context.bot.send_message(chat_id=group_id, text=final_text, parse_mode='Markdown')
+                    async with data_lock:
+                        for sig in session_items:
+                            active_signals.append({
+                                'pair': sig['pair'],
+                                'ticker': sig['ticker'],
+                                'action': sig['action'],
+                                'time': sig['time'],
+                                'datetime_obj': sig['datetime_obj'],
+                                'status': sig['status'],
+                                'flag': sig['flag'],
+                                'checked': False,
+                                'chat_id': group_id,
+                                'msg_id': g_msg.message_id,
+                            })
                 except Exception:
                     pass
 
@@ -751,7 +809,7 @@ async def background_live_auto_scanner(app):
 
             if auto_live_subscribers or TARGET_GROUP_IDS:
                 pair_keys = list(REAL_PAIRS.keys())
-                selected_sample = random.sample(pair_keys, min(4, len(pair_keys)))
+                selected_sample = random.sample(pair_keys, min(3, len(pair_keys)))
                 
                 for pair_name in selected_sample:
                     info = REAL_PAIRS[pair_name]
@@ -770,7 +828,7 @@ async def background_live_auto_scanner(app):
                             engine_used = "Support/Resistance + Rejection"
                             break
 
-                        await asyncio.sleep(1.0)
+                        await asyncio.sleep(0.8)
 
                     if not action:
                         continue
@@ -801,7 +859,6 @@ async def background_live_auto_scanner(app):
 ║ DEVELOPER & OWNER: SIAM TRADERS ║
 ╚═════════════════════════════╝
 """
-                    # সাবস্ক্রাইবারদের ইনবক্সে সিগন্যাল পাঠানো (ইনবক্সে চাইলে ব্যাক বাটন বা ক্লিন রাখা যায়, এখানে ক্লিন রাখা হলো)
                     for user_id in list(auto_live_subscribers):
                         try:
                             sent_msg = await app.bot.send_message(
@@ -826,21 +883,34 @@ async def background_live_auto_scanner(app):
                         except Exception:
                             pass
 
-                    # গ্রুপ চ্যাটে সিগন্যাল পাঠানো (ক্লিন ও উইদাউট বাটন)
-                    for group_id in TARGET_GROUP_IDS:
-                        try:
-                            await app.bot.send_message(
-                                chat_id=group_id, text=signal_box_text, parse_mode='Markdown', reply_markup=None
-                            )
-                            await asyncio.sleep(0.1)
-                        except Exception:
-                            pass
+                    if auto_live_subscribers:
+                        for group_id in TARGET_GROUP_IDS:
+                            try:
+                                g_msg = await app.bot.send_message(
+                                    chat_id=group_id, text=signal_box_text, parse_mode='Markdown'
+                                )
+                                async with data_lock:
+                                    active_signals.append({
+                                        'pair': pair_name,
+                                        'ticker': info['ticker'],
+                                        'action': action,
+                                        'time': target_time_str,
+                                        'datetime_obj': target_time,
+                                        'status': '(Pending)',
+                                        'flag': flag,
+                                        'checked': False,
+                                        'chat_id': group_id,
+                                        'msg_id': g_msg.message_id,
+                                    })
+                                await asyncio.sleep(0.1)
+                            except Exception:
+                                pass
                     
-                    await asyncio.sleep(20)
+                    await asyncio.sleep(25)
         except Exception as e:
             print(f'Auto scanner error: {e}')
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(15)
 
 
 async def background_live_tracker(app):
@@ -858,21 +928,25 @@ async def background_live_tracker(app):
                     msg_groups = {}
                     for sig in active_signals:
                         m_id = sig.get('msg_id')
-                        if m_id:
-                            if m_id not in msg_groups:
-                                msg_groups[m_id] = []
-                            msg_groups[m_id].append(sig)
+                        c_id = sig.get('chat_id')
+                        key = f"{c_id}_{m_id}"
+                        if m_id and c_id:
+                            if key not in msg_groups:
+                                msg_groups[key] = []
+                            msg_groups[key].append(sig)
 
-                    for m_id, sigs in list(msg_groups.items()):
+                    for key, sigs in list(msg_groups.items()):
                         updated_any = False
                         for sig in sigs:
                             if not sig['checked'] and current_time_str >= sig['time']:
-                                sig['checked'] = True
-
                                 df = await fetch_data(sig['ticker'], interval='1m', range_val='1d')
+                                if df is None:
+                                    df = await fetch_data(sig['ticker'], interval='5m', range_val='1d')
+
                                 if df is not None and len(df) >= 2:
-                                    open_price = float(df.iloc[-2]['Open'])
-                                    close_price = float(df.iloc[-2]['Close'])
+                                    sig['checked'] = True
+                                    open_price = float(df.iloc[-1]['Open'])
+                                    close_price = float(df.iloc[-1]['Close'])
 
                                     is_win = False
                                     if sig['action'] == 'PUT' and close_price <= open_price:
@@ -886,6 +960,7 @@ async def background_live_tracker(app):
                         if updated_any:
                             first_sig = sigs[0]
                             chat_id = first_sig['chat_id']
+                            m_id = first_sig['msg_id']
                             pair = first_sig['pair']
                             total_sigs = len(sigs)
 
@@ -924,13 +999,12 @@ async def background_live_tracker(app):
 """
 
                             try:
-                                # যদি চ্যাট আইডি গ্রুপ আইডির তালিকায় থাকে, তবে বাটন থাকবে না (`reply_markup=None`)
-                                # আর যদি প্রাইভেট চ্যাট হয়, তবে ব্যাক বাটন থাকবে
                                 if chat_id in TARGET_GROUP_IDS:
                                     markup = None
                                 else:
                                     markup = InlineKeyboardMarkup([
-                                        [InlineKeyboardButton('🔙 Return to Main Menu', callback_data='BACK_TO_MENU')]
+                                        [InlineKeyboardButton('🔙 Return to Main Menu', callback_data='BACK_TO_MENU'),
+                                         InlineKeyboardButton('🔒 Lock Bot', callback_data='LOCK_BOT')]
                                     ])
 
                                 await app.bot.edit_message_text(
@@ -940,11 +1014,9 @@ async def background_live_tracker(app):
                                     reply_markup=markup,
                                     parse_mode='Markdown',
                                 )
-                                await asyncio.sleep(0.3)
-                            except RetryAfter as e:
-                                await asyncio.sleep(e.retry_after)
-                            except Exception:
-                                pass
+                                await asyncio.sleep(0.2)
+                            except Exception as err:
+                                print(f"Edit error for chat {chat_id}: {err}")
 
                     active_signals[:] = [
                         s for s in active_signals 
